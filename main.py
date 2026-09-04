@@ -10985,6 +10985,14 @@ class MainWindow(QMainWindow):
         self.lbl_batch_logo.setStyleSheet("color: #8FA8C8; font-size: 10px;")
         config_layout.addRow("", self.lbl_batch_logo)
 
+        self.btn_preview_batch_logo = QPushButton(" Preview Batch Logo")
+        self.btn_preview_batch_logo.setIcon(get_icon("render", "#FFFFFF", 16))
+        self.btn_preview_batch_logo.setToolTip(
+            "Preview the saved logo on the selected episode without changing the workspace."
+        )
+        self.btn_preview_batch_logo.clicked.connect(self.preview_batch_logo)
+        config_layout.addRow("", self.btn_preview_batch_logo)
+
         left_layout.addWidget(batch_config_frame)
 
         self.btn_start_batch = QPushButton(" Start Batch Dubbing")
@@ -11323,6 +11331,86 @@ class MainWindow(QMainWindow):
         self.settings["batch_use_logo"] = self.chk_batch_logo.isChecked()
         save_settings(self.settings)
 
+    def preview_batch_logo(self):
+        """Show the selected batch video's first frame with the exact render logo geometry."""
+        import subprocess
+
+        if self.batch_table.rowCount() == 0:
+            popup_warning(self, "No Batch Video", "Add at least one episode before previewing the batch logo.")
+            return
+
+        row = self.batch_table.currentRow()
+        if row < 0:
+            row = 0
+        video_item = self.batch_table.item(row, 1)
+        video_path = video_item.toolTip() if video_item else ""
+        logo_path = self.txt_logo_path.text().strip() if hasattr(self, "txt_logo_path") else ""
+        if not video_path or not os.path.isfile(video_path):
+            popup_error(self, "Video Missing", "The selected batch video cannot be found.")
+            return
+        if not logo_path or not os.path.isfile(logo_path):
+            popup_error(self, "Logo Missing", "Choose a valid logo in Single Dubbing > Logo first.")
+            return
+
+        frame_path = os.path.join(tempfile.gettempdir(), f"batch_logo_preview_{os.getpid()}.png")
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-ss", "1", "-i", video_path, "-frames:v", "1", frame_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            frame = QPixmap(frame_path)
+            if result.returncode != 0 or frame.isNull():
+                raise RuntimeError("FFmpeg could not extract a preview frame from this episode.")
+
+            logo = trimmed_logo_pixmap(logo_path)
+            if logo.isNull():
+                raise RuntimeError("The saved logo image could not be loaded.")
+
+            scale = max(0.03, min(0.80, float(getattr(self, "logo_scale_val", 0.15))))
+            rel_x = max(0.0, min(1.0, float(getattr(self, "logo_rel_x", 0.04))))
+            rel_y = max(0.0, min(1.0, float(getattr(self, "logo_rel_y", 0.01))))
+            target_w = max(16, round(frame.width() * scale))
+            logo = logo.scaledToWidth(target_w, Qt.TransformationMode.SmoothTransformation)
+            x = round((frame.width() - logo.width()) * rel_x)
+            y = round((frame.height() - logo.height()) * rel_y)
+
+            composed = QPixmap(frame)
+            painter = QPainter(composed)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            painter.setOpacity(0.85)
+            painter.drawPixmap(x, y, logo)
+            painter.end()
+
+            dialog = QDialog(self)
+            dialog.setWindowTitle(f"Batch Logo Preview — {os.path.basename(video_path)}")
+            dialog.resize(720, 820)
+            layout = QVBoxLayout(dialog)
+            info = QLabel(
+                f"Episode {row + 1} • Logo {int(scale * 100)}% • "
+                f"Position ({rel_x:.3f}, {rel_y:.3f})"
+            )
+            info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            preview = QLabel()
+            preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            preview.setStyleSheet("background: #000000; border: 1px solid #26364D;")
+            preview.setPixmap(composed.scaled(680, 720, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            close_button = QPushButton("Close Preview")
+            close_button.clicked.connect(dialog.accept)
+            layout.addWidget(info)
+            layout.addWidget(preview, 1)
+            layout.addWidget(close_button)
+            dialog.exec()
+        except Exception as exc:
+            popup_error(self, "Preview Failed", str(exc))
+        finally:
+            try:
+                if os.path.exists(frame_path):
+                    os.remove(frame_path)
+            except OSError:
+                pass
+
     def batch_settings_snapshot(self):
         settings = dict(self.settings)
         settings["translation_provider"] = self.cmb_batch_model.currentText().strip()
@@ -11345,6 +11433,7 @@ class MainWindow(QMainWindow):
             self.chk_batch_vocal_iso,
             self.chk_batch_noise_reduction,
             self.chk_batch_logo,
+            self.btn_preview_batch_logo,
         ):
             widget.setEnabled(enabled)
         self.btn_cancel_batch.setEnabled(not enabled)
