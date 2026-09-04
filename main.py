@@ -12167,7 +12167,43 @@ class MainWindow(QMainWindow):
     def merge_completed(self, output_path):
         self.log_merge_msg(f"SUCCESS: Videos merged successfully! Saved as:\n{os.path.basename(output_path)}")
         self.merge_finished_ui_reset()
-        popup_info(self, "Success", f"Successfully merged videos into:\n{output_path}")
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Video Merge Complete")
+        box.setText(
+            "Videos merged successfully:\n"
+            f"{os.path.basename(output_path)}\n\n"
+            "Choose what to do next."
+        )
+        box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        import_button = box.addButton("Import to Workspace", QMessageBox.ButtonRole.AcceptRole)
+        open_folder_button = box.addButton("Open Folder", QMessageBox.ButtonRole.ActionRole)
+        box.setStyleSheet(MESSAGE_BOX_STYLE)
+        box.exec()
+
+        clicked = box.clickedButton()
+        if clicked is import_button:
+            has_workspace = bool(self.video_file or self.table.rowCount() > 0 or self.audio_files)
+            if has_workspace:
+                self.clear_workspace()
+                # clear_workspace leaves content untouched when its confirmation is cancelled.
+                if self.video_file or self.table.rowCount() > 0 or self.audio_files:
+                    return
+            self.tabs.setCurrentIndex(0)
+            self.load_video_file_direct(output_path)
+            self.log_workflow_msg(f"Merged video imported to workspace: {os.path.basename(output_path)}")
+        elif clicked is open_folder_button:
+            try:
+                import subprocess
+                subprocess.Popen(
+                    ["explorer.exe", "/select,", os.path.normpath(output_path)],
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except OSError as exc:
+                try:
+                    os.startfile(os.path.dirname(os.path.abspath(output_path)))
+                except OSError:
+                    popup_error(self, "Open Folder Failed", str(exc))
 
     def merge_error(self, error_msg):
         self.log_merge_msg(f"ERROR: Merging failed:\n{error_msg}")
