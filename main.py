@@ -5958,8 +5958,9 @@ class MainWindow(QMainWindow):
 
         # Creator / Channel Draggable Logo Overlay Widget
         self.player_container = player_container
-        self.logo_rel_x = 0.82
-        self.logo_rel_y = 0.05
+        self.logo_rel_x = float(self.settings.get("logo_rel_x", 0.82))
+        self.logo_rel_y = float(self.settings.get("logo_rel_y", 0.05))
+        self.logo_scale_val = float(self.settings.get("logo_scale", 0.15))
         self.draggable_logo_widget = DraggableLogoWidget(player_container, self)
         self.draggable_logo_widget.set_relative_position(self.logo_rel_x, self.logo_rel_y)
 
@@ -8703,6 +8704,8 @@ class MainWindow(QMainWindow):
     def on_logo_scale_dragged(self, scale_ratio):
         """Called live when the user resizes or zooms the logo with corners or scroll wheel."""
         self.logo_scale_val = float(scale_ratio)
+        self.settings["logo_scale"] = self.logo_scale_val
+        save_settings(self.settings)
         # Debounce workflow log message so it does not spam on every scroll wheel tick
         if not hasattr(self, "_logo_zoom_timer"):
             self._logo_zoom_timer = QTimer(self)
@@ -8719,6 +8722,9 @@ class MainWindow(QMainWindow):
         """Called live when the user drags the logo on the video player."""
         self.logo_rel_x = rel_x
         self.logo_rel_y = rel_y
+        self.settings["logo_rel_x"] = float(rel_x)
+        self.settings["logo_rel_y"] = float(rel_y)
+        save_settings(self.settings)
         self.schedule_session_autosave()
 
     def get_actual_video_rect(self):
@@ -10965,6 +10971,20 @@ class MainWindow(QMainWindow):
         self.chk_batch_noise_reduction.setChecked(bool(self.settings.get("batch_noise_reduction", True)))
         config_layout.addRow(self.chk_batch_noise_reduction)
 
+        self.chk_batch_logo = QCheckBox("Use saved logo on every episode")
+        self.chk_batch_logo.setChecked(bool(self.settings.get("batch_use_logo", True)))
+        self.chk_batch_logo.setToolTip(
+            "Uses the logo, size, and position currently configured in Single Dubbing."
+        )
+        config_layout.addRow(self.chk_batch_logo)
+        saved_logo_path = self.settings.get("logo_path", "")
+        self.lbl_batch_logo = QLabel(
+            f"Logo: {os.path.basename(saved_logo_path)}" if saved_logo_path else "Logo: Not selected"
+        )
+        self.lbl_batch_logo.setWordWrap(True)
+        self.lbl_batch_logo.setStyleSheet("color: #8FA8C8; font-size: 10px;")
+        config_layout.addRow("", self.lbl_batch_logo)
+
         left_layout.addWidget(batch_config_frame)
 
         self.btn_start_batch = QPushButton(" Start Batch Dubbing")
@@ -11300,6 +11320,7 @@ class MainWindow(QMainWindow):
         self.settings["batch_mix_mode"] = self.cmb_batch_mix.currentText().strip()
         self.settings["batch_voice_only"] = self.chk_batch_vocal_iso.isChecked()
         self.settings["batch_noise_reduction"] = self.chk_batch_noise_reduction.isChecked()
+        self.settings["batch_use_logo"] = self.chk_batch_logo.isChecked()
         save_settings(self.settings)
 
     def batch_settings_snapshot(self):
@@ -11323,6 +11344,7 @@ class MainWindow(QMainWindow):
             self.sld_batch_music,
             self.chk_batch_vocal_iso,
             self.chk_batch_noise_reduction,
+            self.chk_batch_logo,
         ):
             widget.setEnabled(enabled)
         self.btn_cancel_batch.setEnabled(not enabled)
@@ -11367,6 +11389,20 @@ class MainWindow(QMainWindow):
         self.batch_run_mix_mode = self.cmb_batch_mix.currentText().strip()
         self.batch_run_voice_only = self.chk_batch_vocal_iso.isChecked()
         self.batch_run_noise_reduction = self.chk_batch_noise_reduction.isChecked()
+        self.batch_run_use_logo = self.chk_batch_logo.isChecked()
+        self.batch_run_logo_path = (
+            self.txt_logo_path.text().strip() if hasattr(self, "txt_logo_path") else self.settings.get("logo_path", "")
+        )
+        self.batch_run_logo_scale = float(getattr(self, "logo_scale_val", self.settings.get("logo_scale", 0.15)))
+        self.batch_run_logo_rel_x = float(getattr(self, "logo_rel_x", self.settings.get("logo_rel_x", 0.04)))
+        self.batch_run_logo_rel_y = float(getattr(self, "logo_rel_y", self.settings.get("logo_rel_y", 0.01)))
+        if self.batch_run_use_logo and not os.path.isfile(self.batch_run_logo_path):
+            popup_error(
+                self,
+                "Batch Logo Missing",
+                "Choose a valid logo in Single Dubbing > Logo, or turn off 'Use saved logo on every episode'."
+            )
+            return
 
         self.batch_tasks = []
         reserved_outputs = set()
@@ -11423,6 +11459,14 @@ class MainWindow(QMainWindow):
             f"{self.batch_run_settings['translation_provider']}; voice={self.batch_run_voice}; "
             f"auto gender={'ON' if self.batch_run_auto_gender else 'OFF'}; mix={self.batch_run_mix_mode}."
         )
+        if self.batch_run_use_logo:
+            self.log_batch_msg(
+                f"Logo: {os.path.basename(self.batch_run_logo_path)}; "
+                f"size={int(self.batch_run_logo_scale * 100)}%; "
+                f"position=({self.batch_run_logo_rel_x:.3f}, {self.batch_run_logo_rel_y:.3f})."
+            )
+        else:
+            self.log_batch_msg("Logo: OFF for this batch.")
         self.run_next_batch_task()
 
     def cancel_batch_dubbing(self):
@@ -11730,10 +11774,10 @@ class MainWindow(QMainWindow):
             vocal_boost=self.batch_run_noise_reduction,
             mix_mode=self.batch_run_mix_mode,
             voice_only=self.batch_run_voice_only,
-            logo_path=self.settings.get("logo_path", "") if self.settings.get("show_logo", True) else "",
-            logo_scale=float(getattr(self, "logo_scale_val", 0.15)),
-            logo_rel_x=float(getattr(self, "logo_rel_x", 0.04)),
-            logo_rel_y=float(getattr(self, "logo_rel_y", 0.01)),
+            logo_path=self.batch_run_logo_path if self.batch_run_use_logo else "",
+            logo_scale=self.batch_run_logo_scale,
+            logo_rel_x=self.batch_run_logo_rel_x,
+            logo_rel_y=self.batch_run_logo_rel_y,
         )
         self.render_thread.progress.connect(self.batch_progress_update)
         self.render_thread.completed.connect(self.batch_render_completed)
