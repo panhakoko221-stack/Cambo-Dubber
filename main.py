@@ -3337,14 +3337,13 @@ class TTSWorker(QThread):
                     slot_dur = max(0.4, e_sec - s_sec)
                     cps = char_len / slot_dur
                     
-                    # Only accelerate if text significantly exceeds natural speaking speed (cps > 14)
+                    # Keep synthesis close to the selected natural voice rate. Final
+                    # render performs one gentle timing correction; doing a strong
+                    # correction here as well makes some lines unnaturally fast.
                     if cps > 18:
-                        speed_offset = min(20, int((cps - 14) * 2.0))
+                        speed_offset = min(8, int((cps - 14) * 0.8))
                     elif cps > 14:
-                        speed_offset = min(12, int((cps - 14) * 1.5))
-                    elif cps < 7.5:
-                        # Short dialogue with wide mouth window: relax pace slightly so voice doesn't finish way too fast
-                        speed_offset = max(-6, int((cps - 10) * 1.5))
+                        speed_offset = min(5, int((cps - 14) * 0.7))
                     else:
                         speed_offset = 0
                     final_rate_val = slider_pct + speed_offset
@@ -3379,28 +3378,8 @@ class TTSWorker(QThread):
                     finally:
                         loop.close()
 
-                # WYSIWYG Lip-Sync: Match audio duration closely with character mouth window
-                if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-                    try:
-                        from pydub import AudioSegment
-                        seg_audio = AudioSegment.from_file(output_file)
-                        if len(task) >= 5:
-                            s_sec = float(task[3])
-                            e_sec = float(task[4])
-                            slot_dur_ms = int(max(0.4, e_sec - s_sec) * 1000)
-                            ratio = len(seg_audio) / max(1, slot_dur_ms)
-                            if ratio < 0.88 and len(seg_audio) >= 400:
-                                stretch_spd = max(0.85, ratio)
-                                if stretch_spd <= 0.95:
-                                    seg_audio = change_audio_tempo_ffmpeg(seg_audio, stretch_spd)
-                                    seg_audio.export(output_file, format="mp3")
-                            elif len(seg_audio) > slot_dur_ms:
-                                needed_spd = min(len(seg_audio) / slot_dur_ms, 1.35)
-                                if needed_spd > 1.03:
-                                    seg_audio = change_audio_tempo_ffmpeg(seg_audio, needed_spd)
-                                    seg_audio.export(output_file, format="mp3")
-                    except Exception:
-                        pass
+                # Do not duration-correct here. RenderWorker owns the single,
+                # pitch-preserving timing pass so tempo changes cannot compound.
                 
                 self.row_completed.emit(row_idx, output_file)
                 self.progress.emit(int((i + 1) / total_standard * 100))
@@ -3590,37 +3569,29 @@ class RenderWorker(QThread):
                 gap_to_next_ms = max(200, next_start_ms - start_ms - 30)
 
                 current_len_ms = len(voice_seg)
-                ratio = current_len_ms / max(1, subtitle_dur_ms)
 
                 # ====================================================
                 # Intelligent Lip-Sync Matching:
                 # ====================================================
-                # 1. If voice is faster/shorter than character's mouth speaking duration (ratio < 0.88),
-                #    gently stretch tempo (0.85x - 0.96x) with pitch preservation so the voice
-                #    spans the actor's mouth movement without finishing prematurely!
-                if ratio < 0.88 and current_len_ms >= 400:
-                    stretch_speed = max(0.85, ratio)
-                    if stretch_speed <= 0.95:
-                        voice_seg = change_audio_tempo_ffmpeg(voice_seg, stretch_speed)
-                        current_len_ms = len(voice_seg)
+                # 1. Keep naturally short dialogue at its original pace. Silence
+                #    after a short sentence sounds better than stretching speech.
 
                 # 2. If voice is longer than mouth or collides with next dialogue:
                 target_window_ms = min(subtitle_dur_ms + 150, gap_to_next_ms)
                 if current_len_ms > target_window_ms and target_window_ms >= 250:
                     needed_speed = current_len_ms / target_window_ms
-                    needed_speed = min(needed_speed, 1.40)
+                    needed_speed = min(needed_speed, 1.15)
                     if needed_speed > 1.03:
                         voice_seg = change_audio_tempo_ffmpeg(voice_seg, needed_speed)
 
-                # 3. Collision prevention: Never allow voice_seg to overlap with next speech start
+                # 3. Collision prevention with only a gentle final correction.
+                #    Do not truncate words or apply a second aggressive speed-up.
                 if idx < len(sorted_tasks) - 1:
                     strict_max_ms = max(150, next_start_ms - start_ms - 25)
                     if len(voice_seg) > strict_max_ms:
                         remainder_speed = len(voice_seg) / strict_max_ms
-                        if remainder_speed <= 1.30:
+                        if 1.03 < remainder_speed <= 1.15:
                             voice_seg = change_audio_tempo_ffmpeg(voice_seg, remainder_speed)
-                        else:
-                            voice_seg = voice_seg[:strict_max_ms].fade_out(25)
 
                 if self.vocal_boost:
                     voice_seg = level_voice_segment(voice_seg)
