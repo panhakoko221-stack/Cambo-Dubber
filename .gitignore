@@ -1,0 +1,34 @@
+.venv/
+.venv_voxcpm/
+dubber_settings.json
+last_session.json
+__pycache__/
+*.py[cod]
+*.log
+*.bak
+.codex_preview/
+.vscode/
+_reference_ui/
+_check_*/
+_video_check_*/
+cache/
+output/
+outputs/
+exports/
+*.tmp
+
+# Local/runtime binaries are installed or bundled separately.
+ffmpeg.exe
+libcrypto-*.dll
+libffi-*.dll
+libssl-*.dll
+
+# Local diagnostic artifacts.
+screen_grab_logo.png
+test_player_container.png
+test_rendered_logo.png
+window_screenshot_test.png
+test_*_pitch.wav
+voice_samples/test_*.mp4
+voice_samples/test_*.wav
+voice_samples/voice_gender_*.wav

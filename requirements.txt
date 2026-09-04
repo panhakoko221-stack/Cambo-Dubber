@@ -1,0 +1,8 @@
+# Standalone Dubber UI (Python 3.12+)
+PyQt6==6.11.0
+edge-tts==7.2.8
+requests==2.34.2
+pydub>=0.25.1
+
+# VoxCPM/NLLB run in the configured model environment because PyTorch and
+# CUDA versions must match the target GPU. See README.md.
