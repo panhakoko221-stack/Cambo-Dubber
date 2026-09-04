@@ -12178,6 +12178,9 @@ class MainWindow(QMainWindow):
         box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         import_button = box.addButton("Import to Workspace", QMessageBox.ButtonRole.AcceptRole)
         open_folder_button = box.addButton("Open Folder", QMessageBox.ButtonRole.ActionRole)
+        box.setMinimumWidth(520)
+        import_button.setMinimumWidth(190)
+        open_folder_button.setMinimumWidth(190)
         box.setStyleSheet(MESSAGE_BOX_STYLE)
         box.exec()
 
